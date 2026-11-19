@@ -93,7 +93,8 @@ def build_opts(args):
     else:
         h = f"[height<={args.max_height}]" if args.max_height else ""
         if have_ffmpeg:
-            # Best video+audio merged into an mp4 that plays everywhere.
+            # Best video+audio merged into an mp4. The video may be AV1/VP9
+            # (e.g. Facebook reels); --h264 adds a widely playable copy.
             opts["format"] = f"bv*{h}[ext=mp4]+ba[ext=m4a]/bv*{h}+ba/b{h}/b"
             opts["merge_output_format"] = "mp4"
         else:
@@ -112,6 +113,30 @@ def final_path(ydl, info, audio_only):
     return path
 
 
+def to_h264(path):
+    """Re-encode the video track to H.264 when it is something else (AV1, VP9,
+    HEVC), which QuickTime, older iPhones and some Windows players can't play.
+    Returns (source_codec, h264_path or None)."""
+    if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        return None, None
+    codec = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if not codec or codec == "h264":
+        return codec or None, None
+    out = os.path.splitext(path)[0] + ".h264.mp4"
+    if not os.path.exists(out):
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
+             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+             "-c:a", "copy", "-movflags", "+faststart", out],
+            check=True,
+        )
+    return codec, out
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("urls", nargs="+")
@@ -124,6 +149,8 @@ def main():
     p.add_argument("--cookies-from-browser", help="read cookies from a local browser (chrome, firefox, ...)")
     p.add_argument("--playlist", action="store_true", help="download every item if the URL is a playlist/album")
     p.add_argument("--no-info-json", action="store_true", help="skip writing the .info.json sidecar")
+    p.add_argument("--h264", action="store_true",
+                   help="also write a full-resolution H.264 copy (.h264.mp4) if the video is AV1/VP9/HEVC")
     args = p.parse_args()
 
     yt_dlp = load_yt_dlp()
@@ -156,6 +183,12 @@ def main():
                         out["file"] = os.path.abspath(path)
                         if os.path.exists(path):
                             out["size_mb"] = round(os.path.getsize(path) / 1e6, 2)
+                            if args.h264 and not args.audio_only:
+                                codec, h264 = to_h264(path)
+                                out["vcodec"] = codec
+                                if h264:
+                                    out["file_h264"] = os.path.abspath(h264)
+                                    out["size_h264_mb"] = round(os.path.getsize(h264) / 1e6, 2)
                     print(json.dumps(out, ensure_ascii=False))
             except Exception as exc:  # yt_dlp.utils.DownloadError and friends
                 failed += 1

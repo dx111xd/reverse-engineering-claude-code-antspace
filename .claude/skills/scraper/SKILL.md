@@ -27,6 +27,10 @@ file with `ffmpeg`, and hand the file to the user.
    - `--max-height 720`: cap the resolution to keep the file small.
    - `--cookies cookies.txt` or `--cookies-from-browser chrome`: for posts that need a login.
    - `--playlist`: download every item from an album, carousel or playlist.
+   - `--h264`: when the video is AV1, VP9 or HEVC, also write a full-resolution
+     H.264 copy (`.h264.mp4`, reported as `file_h264`) that plays in QuickTime,
+     on older iPhones and in every Windows player. Expect about 3× the size and
+     a few seconds of encoding per second of video.
    - several URLs in one call: all of them are downloaded.
 
    The script prints one JSON line per item. On success it looks like
@@ -38,7 +42,9 @@ file with `ffmpeg`, and hand the file to the user.
 3. **Verify the file.** Run
    `ffprobe -v error -show_entries format=duration:stream=codec_type,width,height -of compact <file>`.
    It should show both a video and an audio stream, and its duration should match the
-   duration in the metadata.
+   duration in the metadata. If the video codec is `av1`, `vp9` or `hevc` and the
+   run didn't use `--h264`, rerun with it (the original isn't downloaded again)
+   and deliver both files.
 
 4. **Deliver it.** Send the file to the user (SendUserFile, `display: "attach"`),
    then report the title, uploader, duration, resolution and size.
@@ -49,9 +55,14 @@ file with `ffmpeg`, and hand the file to the user.
 
 - **Facebook**: `facebook.com/share/r/<code>`, `/share/v/<code>`, `/reel/<id>`,
   `/watch?v=<id>`, `fb.watch/<code>` and `/<page>/videos/<id>` all work. Share links
-  redirect to the canonical reel or video first. Video bytes come from a regional
-  `video-*.xx.fbcdn.net` host. Posts that are private, in a group, or age-gated
-  need `--cookies`.
+  redirect to the canonical reel or video first. Video bytes come from regional
+  CDN hosts such as `video-ord5-1.xx.fbcdn.net` and `video-ord5-2.xx.fbcdn.net`,
+  and a reel's quality levels can be split across several of them. In a sandbox,
+  run `--info-only` first; the `.info.json` it writes lists every format URL, so
+  all the CDN hosts can be allowed in one change. The separate high-resolution
+  streams are often AV1 only, and the pre-muxed `--format hd` file is H.264 but
+  only 720p, so use `--h264` for a full-resolution, widely playable copy.
+  Posts that are private, in a group, or age-gated need `--cookies`.
 - **Instagram**: reels and posts often need a login, so use `--cookies`.
   Use `--playlist` for carousels.
 - **TikTok, YouTube, X, Vimeo, Reddit**: public posts work as they are.
